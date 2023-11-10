@@ -332,7 +332,7 @@
 		"glob": "^7.1.6",
 		"ps-list": "^7.2.0",
 		"underscore": "^1.12.1",
-		"axios": "0.24.0"
+		"axios": "1.6.0"
 	},
 	"extensionDependencies": []
 }
