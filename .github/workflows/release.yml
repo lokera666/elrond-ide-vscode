@@ -15,9 +15,9 @@ jobs:
         node-version: [16.x]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v1
+      uses: actions/setup-node@v3
       with:
         node-version: ${{ matrix.node-version }}
     - run: npm ci
@@ -26,19 +26,15 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        echo " - [CHANGELOG](https://github.com/ElrondNetwork/elrond-ide-vscode/blob/master/CHANGELOG.md)" >> notes.txt
-        echo " - [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=Elrond.vscode-elrond-ide)" >> notes.txt
-        echo "" >> notes.txt
-
         RELEASE_TAG=v$(node -p "require('./package.json').version")
-        gh release create $RELEASE_TAG --title="$RELEASE_TAG" --generate-notes --notes-file=notes.txt
+        gh release create $RELEASE_TAG --title="$RELEASE_TAG" --generate-notes
 
         sleep 5
 
-        npm run package
+        npm run vscode:package
         gh release upload $RELEASE_TAG $(find . -type f -name "*.vsix")        
 
     - name: Publish on Marketplace
       env:
         VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      run: npm run deploy
+      run: npm run vscode:publish

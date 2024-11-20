@@ -1,8 +1,26 @@
 import * as vscode from 'vscode';
-import fs = require("fs");
 import path = require("path");
-import * as sdk from "./sdk";
-import * as storage from "./storage";
+
+// Contract templates cannot be fetched from mxpy v8 easily, since the stdout of "mxpy contract templates" includes non-JSON data.
+// Here, we hardcode the list of templates, in expectation of the new way to get the templates (e.g. via "sc-meta" or directly from a file on GitHub).
+const CONTRACT_TEMPLATES = [
+    {
+        "name": "adder",
+        "language": "rust"
+    },
+    {
+        "name": "crypto-zombies",
+        "language": "rust"
+    },
+    {
+        "name": "empty",
+        "language": "rust"
+    },
+    {
+        "name": "ping-pong-egld",
+        "language": "rust"
+    }
+];
 
 export class TemplatesViewModel implements vscode.TreeDataProvider<ContractTemplate> {
     private _onDidChangeTreeData: vscode.EventEmitter<ContractTemplate | undefined> = new vscode.EventEmitter<ContractTemplate | undefined>();
@@ -12,7 +30,6 @@ export class TemplatesViewModel implements vscode.TreeDataProvider<ContractTempl
     }
 
     async refresh() {
-        await sdk.fetchTemplates(this.getCacheFile());
         this._onDidChangeTreeData.fire(null);
     }
 
@@ -25,18 +42,7 @@ export class TemplatesViewModel implements vscode.TreeDataProvider<ContractTempl
             return [];
         }
 
-        let cacheFile = this.getCacheFile();
-        if (!fs.existsSync(cacheFile)) {
-            return [];
-        }
-
-        let templatesJson = fs.readFileSync(cacheFile, { encoding: "utf8" });
-        let templatesPlain = JSON.parse(templatesJson) as any[];
-        return templatesPlain.map(item => new ContractTemplate(item));
-    }
-
-    private getCacheFile(): string {
-        return storage.getPathTo("templates.json");
+        return CONTRACT_TEMPLATES.map(item => new ContractTemplate(item));
     }
 }
 

@@ -1,71 +1,74 @@
-import { Feedback } from './feedback';
-import { ProcessFacade, sleep } from "./utils";
-import { ConfigurationTarget, InputBoxOptions, Terminal, Uri, window, workspace } from 'vscode';
-import { MySettings } from './settings';
 import axios from "axios";
-import * as storage from "./storage";
-import * as errors from './errors';
-import * as presenter from './presenter';
+import { ConfigurationTarget, InputBoxOptions, Terminal, Uri, window, workspace } from 'vscode';
 import { Environment } from './environment';
-import path = require("path");
+import { Feedback } from './feedback';
+import * as presenter from './presenter';
+import { Settings } from './settings';
+import * as storage from "./storage";
+import { ProcessFacade, sleep } from "./utils";
 import { FreeTextVersion, Version } from './version';
+import path = require("path");
 import fs = require('fs');
 
-const Erdpy = "erdpy";
-const DefaultErdpyVersion = new Version(1, 3, 0);
-const LatestErdpyReleaseUrl = "https://api.github.com/repos/ElrondNetwork/elrond-sdk-erdpy/releases/latest";
-const ErdpyUpUrl = "https://raw.githubusercontent.com/ElrondNetwork/elrond-sdk-erdpy/main/erdpy-up.py";
+const DefaultMxpyVersion = Version.parse("9.4.1");
+const LatestMxpyReleaseUrl = "https://api.github.com/repos/multiversx/mx-sdk-py-cli/releases/latest";
 
 export function getPath() {
-    return MySettings.getElrondSdk();
+    return Settings.getSdkPath();
+}
+
+function getMxpyPath() {
+    // If mxpy is installed using pipx or mxpy-up, it should be in the PATH.
+    // If mxpy is installed using the extension, it's in ~/multiversx-sdk, which is also added to the PATH - see "environment.ts".
+    return "mxpy";
 }
 
 function getPrettyPrinterPath() {
-    return path.join(getPath(), "elrond_wasm_lldb_pretty_printers.py");
+    return path.join(getPath(), "multiversx_sc_lldb_pretty_printers.py");
 }
 
 export async function reinstall() {
-    let latestErdpyVersion = await getLatestKnownErdpyVersion();
-    let version = await presenter.askErdpyVersion(latestErdpyVersion);
+    let latestVersion = await getLatestKnownMxpyVersion();
+    let version = await presenter.askMxpyVersion(latestVersion);
     if (!version) {
         return;
     }
 
-    await reinstallErdpy(version);
+    await reinstallMxpy(version);
 }
 
 /** 
  * Fetch the latest known version from Github, or fallback to the IDE-configured default version, if the fetch fails.
  */
-async function getLatestKnownErdpyVersion(): Promise<Version> {
+async function getLatestKnownMxpyVersion(): Promise<Version> {
     try {
-        let response = await axios.get(LatestErdpyReleaseUrl);
+        let response = await axios.get(LatestMxpyReleaseUrl);
         return Version.parse(response.data.tag_name);
     } catch {
-        return DefaultErdpyVersion;
+        return DefaultMxpyVersion;
     }
 }
 
 export async function ensureInstalled() {
-    await ensureErdpy();
+    await ensureMxpy();
 }
 
-async function ensureErdpy() {
-    let isEdpyInstalled = await isErdpyInstalled();
+async function ensureMxpy() {
+    let isEdpyInstalled = await isMxpyInstalled();
     if (isEdpyInstalled) {
         return;
     }
 
-    let latestErdpyVersion = await getLatestKnownErdpyVersion();
-    let answer = await presenter.askInstallErdpy(latestErdpyVersion);
+    let latestMxpyVersion = await getLatestKnownMxpyVersion();
+    let answer = await presenter.askInstallMxpy(latestMxpyVersion);
     if (answer) {
-        await reinstallErdpy(latestErdpyVersion);
+        await reinstallMxpy(latestMxpyVersion);
     }
 }
 
-async function isErdpyInstalled(exactVersion?: Version): Promise<boolean> {
-    let [cliVersionString, ok] = await getOneLineStdout(Erdpy, ["--version"]);
-    if (!ok) {
+async function isMxpyInstalled(exactVersion?: Version): Promise<boolean> {
+    let [cliVersionString, ok] = await getOneLineStdout(getMxpyPath(), ["--version"]);
+    if (!cliVersionString || !ok) {
         return false;
     }
 
@@ -76,7 +79,7 @@ async function isErdpyInstalled(exactVersion?: Version): Promise<boolean> {
     }
 
     // No exact version specified (desired).
-    let latestKnownVersion = await getLatestKnownErdpyVersion();
+    let latestKnownVersion = await getLatestKnownMxpyVersion();
     return installedVersion.isNewerOrSameAs(latestKnownVersion);
 }
 
@@ -93,48 +96,51 @@ async function getOneLineStdout(program: string, args: string[]): Promise<[strin
     }
 }
 
-export async function reinstallErdpy(version: Version) {
-    let erdpyUp = storage.getPathTo("erdpy-up.py");
-    await downloadFile(erdpyUp, ErdpyUpUrl);
+export async function reinstallMxpy(version: Version) {
+    const mxpyUp = storage.getPathTo("mxpy-up.py");
+    const mxpyUpUrl = getMxpyUpUrl(version);
+    await downloadFile(mxpyUp, mxpyUpUrl);
 
-    let erdpyUpCommand = `python3 "${erdpyUp}" --no-modify-path --exact-version=${version}`;
-    await runInTerminal("installer", erdpyUpCommand, Environment.old);
+    const mxpyUpCommand = `python3 "${mxpyUp}" --exact-version=${version.value} --not-interactive`;
 
-    Feedback.info("erdpy installation has been started. Please wait for installation to finish.");
+    await runInTerminal("installer", mxpyUpCommand);
+
+    Feedback.info({
+        message: "mxpy installation has been started. Please wait for installation to finish.",
+        display: true
+    });
 
     do {
-        Feedback.debug("Waiting for the installer to finish.");
+        Feedback.debug({
+            message: "Waiting for the installer to finish."
+        });
         await sleep(5000);
-    } while ((!await isErdpyInstalled(version)));
+    } while ((!await isMxpyInstalled(version)));
 
-    await Feedback.infoModal("erdpy has been installed. Please close all Visual Studio Code terminals and then reopen them (as needed).");
+    await Feedback.info({
+        message: "mxpy has been installed. Please close all Visual Studio Code terminals and then reopen them (as needed).",
+        display: true,
+        modal: true
+    });
 }
 
-export async function fetchTemplates(cacheFile: string) {
-    try {
-        await ProcessFacade.execute({
-            program: Erdpy,
-            args: ["contract", "templates"],
-            doNotDumpStdout: true,
-            stdoutToFile: cacheFile
-        });
-
-        Feedback.debug(`Templates fetched, saved to ${cacheFile}.`);
-    } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not fetch templates", Inner: error });
-    }
+function getMxpyUpUrl(version: Version) {
+    return `https://raw.githubusercontent.com/multiversx/mx-sdk-py-cli/${version.vValue}/mxpy-up.py`;
 }
 
 export async function newFromTemplate(folder: string, template: string, name: string) {
     try {
         await ProcessFacade.execute({
-            program: Erdpy,
-            args: ["contract", "new", "--directory", folder, "--template", template, name],
+            program: getMxpyPath(),
+            args: ["contract", "new", "--path", folder, "--template", template, "--name", name],
         });
 
-        Feedback.info(`Smart Contract [${name}] created, based on template [${template}].`);
+        Feedback.info({
+            message: `Smart Contract [${name}] created, based on template [${template}].`,
+            display: true
+        });
     } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not create Smart Contract", Inner: error });
+        throw new Error("Could not create Smart Contract", { cause: error });
     }
 }
 
@@ -163,7 +169,7 @@ function findTerminal(name: string): Terminal {
 }
 
 function patchTerminalName(name: string): string {
-    return `Elrond: ${name}`;
+    return `MultiversX: ${name}`;
 }
 
 async function destroyTerminal(name: string) {
@@ -188,28 +194,28 @@ async function killRunningInTerminal(name: string) {
 
 export async function ensureInstalledBuildchains(languages: string[]) {
     for (let i = 0; i < languages.length; i++) {
-        await ensureInstalledErdpyGroup(languages[i]);
+        await ensureInstalledMxpyGroup(languages[i]);
     }
 }
 
-async function ensureInstalledErdpyGroup(group: string) {
-    if (await isErdpyGroupInstalled(group)) {
+async function ensureInstalledMxpyGroup(group: string) {
+    if (await isMxpyGroupInstalled(group)) {
         return;
     }
 
-    let answer = await presenter.askInstallErdpyGroup(group);
+    let answer = await presenter.askInstallMxpyGroup(group);
     if (answer) {
-        await reinstallErdpyGroup(group, FreeTextVersion.unspecified());
+        await reinstallMxpyGroup(group, FreeTextVersion.unspecified());
     }
 }
 
-async function isErdpyGroupInstalled(group: string): Promise<boolean> {
-    let [_, ok] = await getOneLineStdout(Erdpy, ["deps", "check", group]);
+async function isMxpyGroupInstalled(group: string): Promise<boolean> {
+    let [_, ok] = await getOneLineStdout(getMxpyPath(), ["deps", "check", group]);
     return ok;
 }
 
 export async function reinstallModule(): Promise<void> {
-    let module = await presenter.askChooseSdkModule(["vmtools", "rust", "clang", "cpp"]);
+    let module = await presenter.askChooseSdkModule(["vmtools", "rust"]);
     if (!module) {
         return;
     }
@@ -219,78 +225,87 @@ export async function reinstallModule(): Promise<void> {
         return;
     }
 
-    await reinstallErdpyGroup(module, version);
+    await reinstallMxpyGroup(module, version);
 }
 
-async function reinstallErdpyGroup(group: string, version: FreeTextVersion) {
-    Feedback.info(`Installation of ${group} has been started. Please wait for installation to finish.`);
+async function reinstallMxpyGroup(group: string, version: FreeTextVersion) {
+    Feedback.info({
+        message: `Installation of ${group} has been started. Please wait for installation to finish.`,
+        display: true
+    });
+
     let tagArgument = version.isSpecified() ? `--tag=${version}` : "";
-    await runInTerminal("installer", `${Erdpy} --verbose deps install ${group} --overwrite ${tagArgument}`);
+    await runInTerminal("installer", `${getMxpyPath()} --verbose deps install ${group} --overwrite ${tagArgument}`);
 
     do {
-        Feedback.debug("Waiting for the installer to finish.");
-        await sleep(5000);
-    } while ((!await isErdpyGroupInstalled(group)));
+        Feedback.debug({
+            message: "Waiting for the installer to finish."
+        });
 
-    await Feedback.infoModal(`${group} has been installed.`);
+        await sleep(5000);
+    } while ((!await isMxpyGroupInstalled(group)));
+
+    await Feedback.info({
+        message: `${group} has been installed.`,
+        display: true,
+        modal: true
+    });
 }
 
 export async function buildContract(folder: string) {
     try {
-        await runInTerminal("build", `${Erdpy} --verbose contract build "${folder}"`);
+        await runInTerminal("build", `${getMxpyPath()} contract build --path "${folder}"`);
     } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not build Smart Contract", Inner: error });
+        throw new Error("Could not build Smart Contract", { cause: error });
     }
 }
 
 export async function cleanContract(folder: string) {
     try {
-        await runInTerminal("build", `${Erdpy} --verbose contract clean "${folder}"`);
+        await runInTerminal("build", `${getMxpyPath()} --verbose contract clean --path "${folder}"`);
     } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not clean Smart Contract", Inner: error });
+        throw new Error("Could not clean Smart Contract", { cause: error });
     }
 }
 
-export async function runMandosTests(folder: string) {
+export async function runScenarios(folder: string) {
     try {
-        await ensureInstalledErdpyGroup("vmtools");
-        await runInTerminal("mandos", `mandos-test "${folder}"`);
+        await ensureInstalledMxpyGroup("vmtools");
+        await runInTerminal("scenarios", `run-scenarios "${folder}"`);
     } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not run Mandos tests.", Inner: error });
+        throw new Error("Could not run scenarios.", { cause: error });
     }
 }
 
-export async function runFreshTestnet(testnetToml: Uri) {
+export async function runFreshLocalnet(localnetToml: Uri) {
     try {
-        let folder = path.dirname(testnetToml.fsPath);
+        let folder = path.dirname(localnetToml.fsPath);
 
-        await ensureInstalledErdpyGroup("golang");
-        await destroyTerminal("testnet");
-        await runInTerminal("testnet", `${Erdpy} testnet clean`, null, folder);
-        await runInTerminal("testnet", `${Erdpy} testnet prerequisites`);
-        await runInTerminal("testnet", `${Erdpy} testnet config`);
-        await runInTerminal("testnet", `${Erdpy} testnet start`);
+        await ensureInstalledMxpyGroup("golang");
+        await destroyTerminal("localnet");
+        await runInTerminal("localnet", `${getMxpyPath()} localnet setup`, null, folder);
+        await runInTerminal("localnet", `${getMxpyPath()} localnet start`);
     } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not start testnet.", Inner: error });
+        throw new Error("Could not start localnet.", { cause: error });
     }
 }
 
-export async function resumeExistingTestnet(testnetToml: Uri) {
+export async function resumeExistingLocalnet(localnetToml: Uri) {
     try {
-        let folder = path.dirname(testnetToml.fsPath);
+        let folder = path.dirname(localnetToml.fsPath);
 
-        await destroyTerminal("testnet");
-        await runInTerminal("testnet", `${Erdpy} testnet start`, null, folder);
+        await destroyTerminal("localnet");
+        await runInTerminal("localnet", `${getMxpyPath()} localnet start`, null, folder);
     } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not start testnet.", Inner: error });
+        throw Error("Could not start localnet.", { cause: error });
     }
 }
 
-export async function stopTestnet(_testnetToml: Uri) {
+export async function stopLocalnet(_localnetToml: Uri) {
     try {
-        await killRunningInTerminal("testnet");
+        await killRunningInTerminal("localnet");
     } catch (error: any) {
-        throw new errors.MyError({ Message: "Could not start testnet.", Inner: error });
+        throw new Error("Could not start localnet.", { cause: error });
     }
 }
 
@@ -298,7 +313,7 @@ export async function installRustDebuggerPrettyPrinterScript() {
     let repository = await showInputBoxWithDefault({
         title: "Github repository",
         prompt: "The github repository containing the rust debugger pretty printer script.",
-        defaultInput: "ElrondNetwork/elrond-wasm-rs",
+        defaultInput: "multiversx/mx-sdk-rs",
         ignoreFocusOut: true,
     });
     let branch = await showInputBoxWithDefault({
@@ -310,7 +325,7 @@ export async function installRustDebuggerPrettyPrinterScript() {
     let inputPath = await showInputBoxWithDefault({
         title: "File path",
         prompt: "File path to the pretty printer script.",
-        defaultInput: "tools/rust-debugger/pretty-printers/elrond_wasm_lldb_pretty_printers.py",
+        defaultInput: "tools/rust-debugger/pretty-printers/multiversx_sc_lldb_pretty_printers.py",
         ignoreFocusOut: true,
     });
 
@@ -322,7 +337,11 @@ export async function installRustDebuggerPrettyPrinterScript() {
     let commands = [`command script import ${prettyPrinterPath}`];
     await lldbConfig.update("launch.initCommands", commands, ConfigurationTarget.Global);
 
-    await Feedback.infoModal(`The rust debugger pretty printer script has been installed.`);
+    await Feedback.info({
+        message: "The rust debugger pretty printer script has been installed.",
+        display: true,
+        modal: true
+    });
 }
 
 async function showInputBoxWithDefault(options: InputBoxOptions & { defaultInput: string }) {
@@ -340,7 +359,10 @@ async function showInputBoxWithDefault(options: InputBoxOptions & { defaultInput
 async function downloadFile(path: fs.PathLike, url: string) {
     let fileData = await downloadRawData(url);
     fs.writeFileSync(path, fileData);
-    Feedback.debug(`Downloaded file from ${url} to ${path}.`);
+
+    Feedback.debug({
+        message: `Downloaded file from ${url} to ${path}.`
+    });
 }
 
 async function downloadRawData(url: string): Promise<string> {

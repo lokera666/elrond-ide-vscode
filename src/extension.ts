@@ -1,21 +1,17 @@
 import * as vscode from 'vscode';
-import { Root } from './root';
-import { Feedback } from './feedback';
-import * as sdk from "./sdk";
-import { TemplatesViewModel as TemplatesViewModel, ContractTemplate } from './templates';
-import * as workspace from "./workspace";
-import * as erdjsSnippets from "./erdjsSnippets";
-import * as presenter from "./presenter";
-import { Environment } from './environment';
-import * as errors from './errors';
-import * as snippets from './snippets';
-import { SmartContractsViewModel, SmartContract } from './contracts';
 import { Uri } from 'vscode';
+import { SmartContract, SmartContractsViewModel } from './contracts';
+import { onTopLevelError } from "./errors";
+import { Feedback } from './feedback';
+import * as presenter from "./presenter";
+import { Root } from './root';
+import * as sdk from "./sdk";
+import { ContractTemplate, TemplatesViewModel } from './templates';
+import * as workspace from "./workspace";
 import path = require("path");
 
-
 export async function activate(context: vscode.ExtensionContext) {
-	Feedback.debug("ElrondIDE.activate()");
+	Feedback.debug({ message: "MultiversX extension activated." });
 
 	Root.ExtensionContext = context;
 
@@ -24,50 +20,48 @@ export async function activate(context: vscode.ExtensionContext) {
 	let contractsViewModel = new SmartContractsViewModel();
 	vscode.window.registerTreeDataProvider("smartContracts", contractsViewModel);
 
-	vscode.commands.registerCommand("elrond.setupWorkspace", setupWorkspace);
-	vscode.commands.registerCommand("elrond.installSdk", installSdk);
-	vscode.commands.registerCommand("elrond.installSdkModule", installSdkModule);
-	vscode.commands.registerCommand("elrond.installRustDebuggerPrettyPrinterScript", installRustDebuggerPrettyPrinterScript);
-	vscode.commands.registerCommand("elrond.gotoContract", gotoContract);
-	vscode.commands.registerCommand("elrond.buildContract", buildContract);
-	vscode.commands.registerCommand("elrond.runContractSnippet", runContractSnippet);
-	vscode.commands.registerCommand("elrond.runMandosTests", runMandosTests);
-	vscode.commands.registerCommand("elrond.runFreshTestnet", runFreshTestnet);
-	vscode.commands.registerCommand("elrond.resumeExistingTestnet", resumeExistingTestnet);
-	vscode.commands.registerCommand("elrond.stopTestnet", stopTestnet);
+	vscode.commands.registerCommand("multiversx.setupWorkspace", setupWorkspace);
+	vscode.commands.registerCommand("multiversx.installSdk", installSdk);
+	vscode.commands.registerCommand("multiversx.installSdkModule", installSdkModule);
+	vscode.commands.registerCommand("multiversx.installRustDebuggerPrettyPrinterScript", installRustDebuggerPrettyPrinterScript);
+	vscode.commands.registerCommand("multiversx.gotoContract", gotoContract);
+	vscode.commands.registerCommand("multiversx.buildContract", buildContract);
+	vscode.commands.registerCommand("multiversx.runScenarios", runScenarios);
+	vscode.commands.registerCommand("multiversx.runFreshLocalnet", runFreshLocalnet);
+	vscode.commands.registerCommand("multiversx.resumeExistingLocalnet", resumeExistingLocalnet);
+	vscode.commands.registerCommand("multiversx.stopLocalnet", stopLocalnet);
 
-	vscode.commands.registerCommand("elrond.cleanContract", cleanContract);
-	vscode.commands.registerCommand("elrond.refreshTemplates", async () => await refreshViewModel(templatesViewModel));
-	vscode.commands.registerCommand("elrond.newFromTemplate", newFromTemplate);
-	vscode.commands.registerCommand("elrond.refreshContracts", async () => await refreshViewModel(contractsViewModel));
-
-	vscode.commands.registerCommand("elrond.setupErdjsSnippets", setupErdjsSnippets);
-
-	Environment.set();
+	vscode.commands.registerCommand("multiversx.cleanContract", cleanContract);
+	vscode.commands.registerCommand("multiversx.refreshTemplates", async () => await refreshViewModel(templatesViewModel));
+	vscode.commands.registerCommand("multiversx.newFromTemplate", newFromTemplate);
+	vscode.commands.registerCommand("multiversx.refreshContracts", async () => await refreshViewModel(contractsViewModel));
 }
 
 export function deactivate() {
-	Feedback.debug("ElrondIDE.deactivate()");
+	Feedback.debug({ message: "MultiversX extension deactivated." });
 }
 
 async function setupWorkspace() {
-	if (!workspace.guardIsOpen()) {
+	if (!workspace.isOpen()) {
+		await presenter.askOpenWorkspace();
 		return;
 	}
 
-	Environment.set();
 	await workspace.setup();
 	await sdk.ensureInstalled();
-	await workspace.patchLaunchAndTasks();
 	await ensureInstalledBuildchains();
-	await Feedback.infoModal("Workspace has been set up.");
+
+	await Feedback.info({
+		message: "Workspace has been set up.",
+		display: true
+	});
 }
 
 async function installSdk() {
 	try {
 		await sdk.reinstall();
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
@@ -75,7 +69,7 @@ async function installSdkModule() {
 	try {
 		await sdk.reinstallModule();
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
@@ -83,7 +77,7 @@ async function installRustDebuggerPrettyPrinterScript() {
 	try {
 		await sdk.installRustDebuggerPrettyPrinterScript();
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
@@ -91,7 +85,7 @@ async function refreshViewModel(viewModel: any) {
 	try {
 		await viewModel.refresh();
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
@@ -102,11 +96,10 @@ async function newFromTemplate(template: ContractTemplate) {
 		let contractName = await presenter.askContractName();
 
 		await sdk.newFromTemplate(parentFolder, templateName, contractName);
-		await workspace.patchLaunchAndTasks();
 		await ensureInstalledBuildchains();
 		vscode.commands.executeCommand("workbench.files.action.refreshFilesExplorer");
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
@@ -116,7 +109,7 @@ async function gotoContract(contract: SmartContract) {
 		await vscode.commands.executeCommand("vscode.open", uri);
 		await vscode.commands.executeCommand("workbench.files.action.focusFilesExplorer");
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
@@ -125,7 +118,7 @@ async function buildContract(contract: any) {
 		let folder = getContractFolder(contract);
 		await sdk.buildContract(folder);
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
@@ -134,23 +127,14 @@ async function cleanContract(contract: any) {
 		let folder = getContractFolder(contract);
 		await sdk.cleanContract(folder);
 	} catch (error) {
-		errors.caughtTopLevel(error);
-	}
-}
-
-async function runContractSnippet(contract: any) {
-	try {
-		let folder = getContractFolder(contract);
-		await snippets.runContractSnippet(folder);
-	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
 function getContractFolder(contract: any): string {
 	if (contract instanceof Uri) {
 		let fsPath = contract.fsPath;
-		if (fsPath.includes("elrond.json")) {
+		if (fsPath.includes("multiversx.json")) {
 			return path.dirname(fsPath);
 		} else if (fsPath.includes("snippets.sh")) {
 			return path.dirname(fsPath);
@@ -162,50 +146,43 @@ function getContractFolder(contract: any): string {
 	return (contract as SmartContract).getPath();
 }
 
-async function runMandosTests(item: any) {
+async function runScenarios(item: any) {
 	try {
 		if (item instanceof Uri) {
-			await sdk.runMandosTests(item.fsPath);
+			await sdk.runScenarios(item.fsPath);
 		} else {
-			await sdk.runMandosTests((item as SmartContract).getPath());
+			await sdk.runScenarios((item as SmartContract).getPath());
 		}
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
-async function runFreshTestnet(testnetToml: Uri) {
+async function runFreshLocalnet(localnetToml: Uri) {
 	try {
-		await sdk.runFreshTestnet(testnetToml);
+		await sdk.runFreshLocalnet(localnetToml);
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
-async function resumeExistingTestnet(testnetToml: Uri) {
+async function resumeExistingLocalnet(localnetToml: Uri) {
 	try {
-		await sdk.resumeExistingTestnet(testnetToml);
+		await sdk.resumeExistingLocalnet(localnetToml);
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
-async function stopTestnet(testnetToml: Uri) {
+async function stopLocalnet(localnetToml: Uri) {
 	try {
-		await sdk.stopTestnet(testnetToml);
+		await sdk.stopLocalnet(localnetToml);
 	} catch (error) {
-		errors.caughtTopLevel(error);
+		await onTopLevelError(error);
 	}
 }
 
 async function ensureInstalledBuildchains() {
 	let languages = workspace.getLanguages();
 	await sdk.ensureInstalledBuildchains(languages);
-}
-
-async function setupErdjsSnippets() {
-	let destinationFolder = await presenter.askOpenFolder(`Please select a destination for "erdjs-snippets":`);
-	if (destinationFolder) {
-		await erdjsSnippets.setup(destinationFolder);
-	}
 }
